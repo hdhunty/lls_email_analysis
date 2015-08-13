@@ -2,27 +2,36 @@
 
 import email
 from email.header import decode_header, make_header
+import getpass
 import imaplib
 import re
 import MySQLdb as mdb
 import sys
 import datetime
 
+# ask for inputs
+# startdate = raw_input("Enter the start date in DD-MMM-YYYY format (i.e. 01-Aug-2015): ")
+# enddate = raw_input("Enter the end date in DD-MMM-YYYY format (i.e. 01-Aug-2015): ")
+# searchquery = "(SINCE \"%s\" BEFORE \"%s\")" % (startdate, enddate)
+# print searchquery
+
 # connect to gmail imap server
 mail = imaplib.IMAP4_SSL('imap.gmail.com')
+# password = getpass.getpass("Enter your password: ")
 mail.login('hunter@liulishuo.com', 'l1i2u3l4i5')
-mail.list()
 
 # get the count of support emails
 varEmailcount = mail.select('Support')
 varEmailcount = int(varEmailcount[1][0])
 
-typ, data = mail.search(None, 'ALL')
+typ, data = mail.search("utf-8", 'sentsince 01-Aug-2015')
 ids = data[0]
 id_list = ids.split()
 
 #get the most recent email id
 latest_email_id = int( id_list[-1] )
+
+f = open("support_email_log.txt", "w")
 
 def get_decoded_email_body(message_body):
     """ Decode email body.
@@ -54,6 +63,9 @@ def get_decoded_email_body(message_body):
             if part.get_content_type() == 'text/html':
                 html = unicode(part.get_payload(decode=True), str(charset), "ignore").encode('utf8', 'replace')
 
+            else:
+                continue
+
         if text is not None:
             return text.strip()
         else:
@@ -64,29 +76,40 @@ def get_decoded_email_body(message_body):
 
 # this function looks for the Liulihao in the body of an e-mail
 # the Liulihao is 8-10 digits
+
+# are there patterns in Liulihao?
+
 def info_regex(text):
-    pattern = '\d{8,10}'
+    pattern = '(?!3162034932|1316203493|162034932|62034932)(\d{8,10})'
     results = re.search(pattern, text)
     if results is not None:
         s = results.start()
         e = results.end()
         return text[s:e]
     else:
-        return "NULL"
+        return None
+    # results = re.findall(pattern, text)
+    # if results is not None:
+    #     return results
+    # else:
+    #     return None
 
 # sometimes the message can't be read normally without decoding
 # this is for those messages
+
 def info_han_regex(text):
     pattern = '\d{9,10}'
     results = re.findall(pattern, text)
     if results is not None:
         return results
     else:
-        return "NULL"
+        # how to insert NULL and not the string "NULL" into MySQL?
+        return None
 
 # the message subject will contain the name of the app that the email
 # is being sent from
-# this converts from Chinese to in-house code names    
+# this converts from Chinese to in-house code names 
+   
 def subject_regex(text):
     pattern1 = u'口语发音教练'
     pattern2 = u'英语流利说'
@@ -98,7 +121,7 @@ def subject_regex(text):
     elif re.search(pattern3, text):
         return "tydus"
     else:
-        return "NULL"
+        return None
 
 # initialize connection to local mysql server
 connect  = mdb.connect(host = "localhost",
@@ -106,21 +129,31 @@ connect  = mdb.connect(host = "localhost",
      user = "hunter",
      passwd = "hunter",
      db = "hunter")
-# initialize server
+# initialize cursor
 cursor = connect.cursor()
 
 #iterate through all messages in decending order starting with latest_email_id
 #the '-1' dictates reverse looping order
+
+# expected output would be in date order but that doesn't seem to be the case. Why?
 for i in range(latest_email_id, latest_email_id-varEmailcount, -1):
     typ, data = mail.fetch( i, '(RFC822)' )
+    varBody = ''
 
     # for each message, we decode the message and take parts we are interested in
     # we want the sender's email, liulihao, app_name, and date
     for response_part in data:
         if isinstance(response_part, tuple):
+
             # get encoded message and decode
             msg = email.message_from_string(response_part[1])
-            body = get_decoded_email_body(response_part[1])
+            print msg
+            varBody = get_decoded_email_body(response_part[1])
+            # print varBody
+            # if msg.is_multipart():
+            #     for part in msg.walk():
+            #         if part.get_content_type() == 'image/png':
+            #             print part
 
             # subject will still be encoded so decode into ASCII
             dh = decode_header(msg['subject'])
@@ -128,6 +161,7 @@ for i in range(latest_email_id, latest_email_id-varEmailcount, -1):
 
             # use decoded subject to find app name
             varAppName = ''.join([ unicode(t[0], t[1] or default_charset) for t in dh ])
+            # print varAppName
             varAppName = subject_regex(varAppName)
 
             # clean up the sender's email by removing unnecessary characters
@@ -135,6 +169,9 @@ for i in range(latest_email_id, latest_email_id-varEmailcount, -1):
             varFrom = varFrom.split(" ")[-1]
             varFrom = varFrom.replace('<', '')
             varFrom = varFrom.replace('>', '')
+            # print varFrom
+
+            f.write(varFrom + "\n")
 
             # convert date to readable MySQL format
             varDate = msg['date']
@@ -143,17 +180,39 @@ for i in range(latest_email_id, latest_email_id-varEmailcount, -1):
             varDate = varDate.strftime('%Y-%m-%d %H:%M:%S')
 
             # get Liulihao
-            varLiulihao = info_regex(body)
+            # varLiulihao = info_regex(varBody)
+            varLiulihao = info_regex(varBody)
+            # print varLiulihao
+
+            # get truncated body if too long
+            if len(varBody) > 255:
+                varBody = varBody[0:252] + '...'
 
             # insert information into database
             # database has UNIQUE email key so there are no repetitions
-            cursor.execute("""REPLACE INTO hunter.email_analysis (data_date, email, liulihao, app_name) 
-                VALUES ('%s', '%s', '%s', '%s')""" % (varDate, varFrom, varLiulihao, varAppName))
+            cursor.execute("""INSERT IGNORE INTO hunter.email_analysis_test (data_date, email, liulihao, app_name, body) 
+                VALUES ('%s', '%s', '%s', '%s', '%s')""" % (varDate, varFrom, varLiulihao, varAppName, varBody))
+            # cursor.execute("""INSERT IGNORE INTO hunter.email_email_test (email)
+            #     VALUES ('%s')""" % (varFrom))
+
+            # cursor.execute("""INSERT IGNORE INTO hunter.email_date_test (data_date)
+            #     VALUES ('%s')""" % (varDate))
+
+            # cursor.execute("""REPLACE INTO hunter.email_liulihao_test (liulihao)
+            #     VALUES ('%s')""" % (varLiulihao))
+
+            # cursor.execute("""INSERT IGNORE INTO hunter.email_app_name_test (app_name)
+            #     VALUES ('%s')""" % (varAppName))
+            
+            # cursor.execute("""INSERT IGNORE INTO hunter.email_body_test (body)
+            #     VALUES ('%s')""" % (varBody))
 
             # commit the changes
             connect.commit()
 # close out the connection to the MySQL database
 connect.close()
+
+f.close()
 
 
 
