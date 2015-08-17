@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import email
@@ -10,28 +11,37 @@ import sys
 import datetime
 
 # ask for inputs
-# startdate = raw_input("Enter the start date in DD-MMM-YYYY format (i.e. 01-Aug-2015): ")
-# enddate = raw_input("Enter the end date in DD-MMM-YYYY format (i.e. 01-Aug-2015): ")
+startdate = raw_input("Enter the start date in DD-MMM-YYYY format (i.e. 01-Aug-2015): ")
+enddate = raw_input("Enter the end date in DD-MMM-YYYY format (i.e. 01-Aug-2015): ")
+text = '流利号'
+print text
 # searchquery = "(SINCE \"%s\" BEFORE \"%s\")" % (startdate, enddate)
+# searchquery = "(SINCE \"%s\")" % (startdate)
 # print searchquery
 
 # connect to gmail imap server
 mail = imaplib.IMAP4_SSL('imap.gmail.com')
 # password = getpass.getpass("Enter your password: ")
 mail.login('hunter@liulishuo.com', 'l1i2u3l4i5')
+mail.list()
 
 # get the count of support emails
-varEmailcount = mail.select('Support')
-varEmailcount = int(varEmailcount[1][0])
+mail.select('Support')
+# varEmailcount = int(varEmailcount[1][0])
 
-typ, data = mail.search("utf-8", 'sentsince 01-Aug-2015')
+# date = "05-Aug-2015"
+# date2 = "10-Aug-2015"
+# typ, data = mail.uid('search', None, '(SINCE {startdate} BEFORE {enddate} TEXT {text})'.format(startdate=startdate, enddate=enddate, text=text))
+typ, data = mail.uid('search', None, '(TEXT {text})'.format(text=text))
 ids = data[0]
 id_list = ids.split()
 
 #get the most recent email id
 latest_email_id = int( id_list[-1] )
 
+# create log file
 f = open("support_email_log.txt", "w")
+f.write("Support emails between %s and %s \n" % (startdate, enddate))
 
 def get_decoded_email_body(message_body):
     """ Decode email body.
@@ -135,9 +145,8 @@ cursor = connect.cursor()
 #iterate through all messages in decending order starting with latest_email_id
 #the '-1' dictates reverse looping order
 
-# expected output would be in date order but that doesn't seem to be the case. Why?
-for i in range(latest_email_id, latest_email_id-varEmailcount, -1):
-    typ, data = mail.fetch( i, '(RFC822)' )
+for i in id_list:
+    typ, data = mail.uid('fetch', i, '(RFC822)' )
     varBody = ''
 
     # for each message, we decode the message and take parts we are interested in
@@ -149,11 +158,6 @@ for i in range(latest_email_id, latest_email_id-varEmailcount, -1):
             msg = email.message_from_string(response_part[1])
             print msg
             varBody = get_decoded_email_body(response_part[1])
-            # print varBody
-            # if msg.is_multipart():
-            #     for part in msg.walk():
-            #         if part.get_content_type() == 'image/png':
-            #             print part
 
             # subject will still be encoded so decode into ASCII
             dh = decode_header(msg['subject'])
@@ -171,8 +175,6 @@ for i in range(latest_email_id, latest_email_id-varEmailcount, -1):
             varFrom = varFrom.replace('>', '')
             # print varFrom
 
-            f.write(varFrom + "\n")
-
             # convert date to readable MySQL format
             varDate = msg['date']
             varDate = email.utils.parsedate(varDate)
@@ -183,6 +185,11 @@ for i in range(latest_email_id, latest_email_id-varEmailcount, -1):
             # varLiulihao = info_regex(varBody)
             varLiulihao = info_regex(varBody)
             # print varLiulihao
+
+            if varLiulihao is not None:
+                f.write(varFrom + " | " + varLiulihao + " | Y \n")
+            else:
+                f.write(varFrom + " | None | N \n")
 
             # get truncated body if too long
             if len(varBody) > 255:
@@ -213,8 +220,6 @@ for i in range(latest_email_id, latest_email_id-varEmailcount, -1):
 connect.close()
 
 f.close()
-
-
 
 
 
